@@ -1,0 +1,354 @@
+---
+title: "hlm_lab_1"
+author: "Jose Hernandez"
+date: "10/4/2019"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Hierarchical Linear Models in R 
+
+We will primarily be using the lmer library `lme4`.  
+
+
+```{r libraries}
+library(tidyverse)
+library(MASS)
+library(lme4)
+```
+
+## We will use the dataset nlschools
+
+```{r nlschools data}
+data(nlschools)
+
+glimpse(nlschools)
+
+```
+
+## We can look at the overall mean of scores 
+
+```{r}
+nlschools %>%
+  summarise(overall_mean = mean(lang))
+```
+If we tried to make some inferences about the relationship of SES to language performance using a simple model, we might run into some problems.
+
+```{r}
+ggplot(nlschools, aes(x=SES, y=lang)) + geom_point() + 
+  geom_smooth(method = lm, se=F)
+```
+
+*Notice the variability of the scores of individuals by ses* It's all over the place, could this variability be explained by class differences? 
+
+## Let's look at the class language scores 
+
+```{r}
+
+nlschools %>%
+  group_by(class) %>%
+  summarise(class_mean = mean(lang))
+```
+
+## Let's look at SES means by classroom and scores by classroom
+
+```{r}
+groups <- nlschools %>%
+  group_by(class) %>%
+  summarise(class_mean = mean(lang),
+            ses_mean = mean(SES))
+```
+
+```{r}
+ggplot(groups, aes(x=ses_mean, y=class_mean)) + geom_point() + 
+  geom_smooth(method = lm, se=F)
+```
+
+## Combining these ideas = HLM 
+
+### The Null Model 
+
+*How can we determine if our model is impacted by its nested structure* 
+
+```{r}
+null_model <- lmer(lang ~ (1| class), REML = F, data = nlschools)
+summary(null_model)
+```
+
+### Calculating the Intraclass Correlation
+
+*Variation explained by clasroom effects*
+
+icc = between_variance / between_variance + within_variance 
+
+```{r pressure, echo=FALSE}
+library(sjstats)
+icc(null_model)
+```
+
+### 23% of the variance in language scores is explained by the school effects, we need to proceed with modeling these effects
+
+## Vizualizing the random effects estimates (random intercept = different class means) 
+
+```{r}
+results <- ranef(null_model, condVar = TRUE)$class
+
+results<- tibble::rownames_to_column(results, "class") %>%
+  rename(resid = `(Intercept)`) %>%
+  mutate(class = as.character(class)) 
+
+results %>%
+ggplot(., aes(class,resid)) +
+geom_pointrange(aes(ymin=resid-1.96*resid,
+                        ymax=resid+1.96*resid))+
+  geom_hline(yintercept=0, linetype="dashed", color="red") +
+    coord_flip()
+```
+## Adding a student level covariate 
+
+```{r}
+ses_model <- lmer(lang ~ SES + (1| class), REML = F, data = nlschools)
+summary(ses_model)
+```
+
+# we fixed the slopes for SES 
+
+```{r}
+fixef(ses_model)[1]
+
+
+ggplot(nlschools, aes(x = SES, y = lang, colour=class)) +
+  geom_point(shape = 16, size=1.8) + theme(legend.position = "none") +
+  geom_abline(aes(intercept=fixef(ses_model)[1], slope=fixef(ses_model)[2]), color = "blue")
+```
+
+# Each class has a different mean score while controlling for ses of each student
+We will plot:
+1. The individual class level lang and SES relationships
+2. We will add the individual class regressionline if we were to ignore class effects
+3. We will add the overall estimated line of the SES fixed effect
+4. We will add the fitted line as estimated by our HLM model
+
+
+```{r}
+
+plot_ses <- data.frame(ses_model@frame, fitted_re = fitted(ses_model))
+head(plot_ses)
+
+fixed_ses <- data.frame("intercept"=fixef(ses_model)[[1]], 'slope' = fixef(ses_model)[[2]])
+head(fixed_ses)
+
+plot_ses %>%
+  filter(class %in% c(8080, 22880, 2780, 4780)) %>% # we want 4 classes for illustration
+  ggplot(., aes(x = SES, y = lang)) + geom_point() + 
+  
+  geom_smooth(method = lm, se=F, color = "red") + # Add the lm line for each class
+  
+  facet_wrap(~ class, nrow = 2) +
+  
+  geom_line(aes(y = fitted_re), linetype = 2, color = 'blue') + # add fitted line from model
+  
+  geom_abline(intercept = fixed_ses[[1]], slope = fixed_ses[[2]], linetype = 2, color = 'purple') + 
+  theme_bw() # add the overall mean 
+
+```
+
+*Notice f=how the fitted lines are pulled to the overall mean of the SES effect.* This is what we call **shrinkage**, the fewer samples we have the more it relies on the overall mean of SES.  
+
+## What about varying the slopes 
+
+### Does each class has a relationship with SES? 
+
+```{r}
+ggplot(nlschools, aes(x=SES, y=lang, color = class)) + geom_point() + 
+  geom_smooth(method = lm, se=F) + theme(legend.position = "none")
+  
+```
+
+### We can look at 4 schools 
+
+```{r}
+nlschools %>%
+  filter(class %in% c(8080, 22880, 2780, 4780)) %>%
+  ggplot(., aes(x=SES, y=lang, color = class)) + geom_point() + 
+  geom_smooth(method = lm, se=F) + theme(legend.position = "none") +
+  facet_wrap(~ class, nrow = 2)
+  
+```
+
+## Running a random intercept and random slope model
+
+*We need to mean center `SES`, since `SES` and `lang` scores are on different scales!
+
+```{r}
+nlschools <- nlschools %>%
+  mutate(ses = SES - mean(SES))
+
+ses_model_slopes <- lmer(lang ~ ses + (1 + ses | class), REML = F, data = nlschools)
+summary(ses_model_slopes)
+```
+
+Look at the variance of SES...
+
+*Look at the BIC* 
+
+15990 vs 15986 *SMALLER IS BETTER*
+
+## Not a lot of evidence that varying the slopes is necessary, but we can still vizualize
+
+```{r}
+plot_ses_slopes <- data.frame(ses_model_slopes@frame, fitted_re = fitted(ses_model_slopes))
+head(plot_ses_slopes)
+
+fixed_ses_slope <- data.frame("intercept"=fixef(ses_model_slopes)[[1]], 'slope' = fixef(ses_model_slopes)[[2]])
+
+
+plot_ses_slopes %>%
+  filter(class %in% c(8080, 22880, 2780, 4780)) %>% # we want 4 classes for illustration
+  ggplot(., aes(x = ses, y = lang)) + geom_point() + 
+  
+  geom_smooth(method = lm, se=F, color = "red") + # Add the lm line for each class
+  facet_wrap(~ class, nrow = 2) +
+  geom_line(aes(y = fitted_re), linetype = 2, color = 'blue')  +
+  geom_abline(intercept = fixed_ses[[1]], slope = fixed_ses[[2]], linetype = 2, color = 'purple') +
+  theme_bw() # add the overall mean 
+```
+
+# Adding Another Nested Structure 
+
+```{r}
+level3_data <- read_csv("/Users/josehernandez/Documents/eScience/tutorials/stats_intro/3_level_sch.csv")
+names(level3_data)
+```
+
+## Data 
+Contains information about math scores of students that are in classrooms in different schools
+
+**IVs**
+Individual 
+- Active time 
+
+Class
+
+- Class Size
+
+```{r}
+level3_data$Classroom_f <- as.factor(level3_data$Classroom)
+
+ggplot(data = level3_data, aes(x = ActiveTime, y=Math,group=Classroom_f))+
+  coord_cartesian(ylim=c(10,80))+
+  geom_point()+
+  geom_smooth(method = "lm", se = TRUE, aes(colour = Classroom_f))+
+  xlab("Active Learning Time")+ylab("Math Score")+
+  theme(legend.position = "none")
+```
+
+### Active learning time varies by classtoom 
+
+# Lets ignore the school level for now and look at classroom effects
+
+we have repeated classrooms
+
+```{r}
+level3_data$Classroom_2l <- paste(level3_data$School,level3_data$Classroom_f,sep=":")
+```
+
+### we need to mean center 
+
+```{r}
+level3_data <- level3_data %>%
+  mutate(active_time_m = ActiveTime - mean(ActiveTime))
+
+level3_data <- level3_data %>%
+  mutate(class_size_m = ClassSize - mean(ClassSize))
+```
+
+### run the null model 
+```{r}
+null_class <- lmer(Math ~ 1 + (1|Classroom_2l), data = level3_data, REML = FALSE)
+summary(null_class)
+```
+
+## Check ICC
+```{r}
+icc(null_class)
+```
+
+### Check effects 
+
+```{r}
+class_2l_model <- lmer(Math ~ active_time_m + class_size_m + (1|Classroom_2l), data = level3_data, REML = FALSE)
+
+summary(class_2l_model)
+```
+
+### We have main effects but remeber that we have ignored school effects and we are only looking at the classroom effects.  Do we have reason to suspect that active learning time varies by school? 
+
+```{r}
+ggplot(data = level3_data, aes(x = ActiveTime, y=Math,group=Classroom_f))+
+  facet_grid(~School)+
+  coord_cartesian(ylim=c(10,80))+
+  geom_point(aes(colour = Classroom_f))+
+  geom_smooth(method = "lm", se = TRUE, aes(colour = Classroom_f))+
+  xlab("Active Learning Time")+ylab("Math Score")+
+  theme(legend.position = "none")
+```
+
+### Schools seem to vary by active learning, what about school size?
+
+Previously we centered using the overall mean of all classrooms.  If we look at that by school what do we see?
+
+```{r}
+ggplot(data = level3_data, aes(x = ClassSize, y=Math))+
+  facet_grid(~School)+
+  coord_cartesian(ylim=c(10,80))+
+  geom_point()+
+  geom_smooth(method = "lm", se = TRUE)+
+  xlab("Class Size")+ylab("Math Score")+
+  theme(legend.position = "top")
+```
+
+We don't really see a varying effect...
+
+### We need to center at the school level! We will now test the effect of class size relative to the school. "How does class size affect math score, relative the school you are in..."
+
+```{r}
+level3_data <- level3_data %>%
+  group_by(School) %>%
+  mutate(class_school_m = mean(ClassSize)) %>%
+  mutate(class_SC = ClassSize - class_school_m)
+```
+
+```{r}
+ggplot(data = level3_data, aes(x = class_SC, y=Math))+
+  facet_grid(~School)+
+  coord_cartesian(ylim=c(10,80))+
+  geom_point()+
+  geom_smooth(method = "lm", se = TRUE)+
+  xlab("Class Size")+ylab("Math Score")+
+  theme_bw()+
+  theme(legend.position = "top")
+```
+
+```{r}
+L3_null<-lmer(Math ~ 1
+              +(1|School)
+              +(1|School:Classroom_f),  
+              data=level3_data, REML=FALSE)
+summary(L3_null)
+```
+
+## let's look at the ICC
+```{r}
+icc(L3_null)
+```
+
+```{r}
+L3_model_1<-lmer(Math ~ active_time_m + class_SC
+              +(1|School)
+              +(1|School:Classroom_f),  
+              data=level3_data, REML=F)
+
+summary(L3_model_1)
+```
