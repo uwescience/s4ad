@@ -1,0 +1,65 @@
+---
+title: "linear_regression_lab"
+author: "Jose Hernandez"
+date: "10/4/2019"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Linear Regression
+
+We will be using `tidyverse` tools and `lm` for linear regression examples.
+
+```{r load packages}
+library(tidyverse)
+```
+
+
+*Create Fake Data*
+```{r built in data}
+data(longley)
+glimpse(longley)
+```
+
+### Longley Dataset
+
+Economics data to use for the regression example.
+
+Plot variables `Emplyed` vs `GNP`.  
+
+`GNP` = 'Gross National Product'
+`Employed` = 'Number of people employed'
+
+```{r}
+ggplot(longley, aes(x=GNP, y=Employed)) + geom_point()
+```
+
+### Run a linear regression on y = `Employed` and x = `GNP`
+
+```{r pressure, echo=FALSE}
+fit_model <- lm(Employed~ GNP, longley)
+summary(fit_model)
+```
+
+```{r}
+ggplot(longley, aes(x=GNP, y=Employed)) + geom_point() +
+geom_smooth(method = lm, se=F)
+
+```
+
+### Making Prediction
+
+What would you predict the number of employed individuals would be for `GNP = 300` using the formula specification?
+
+*Let's use the model to make many predictions*
+
+```{r}
+X <- data.frame(GNP = c(300, 200, 500, 100, 600, 1000))
+predict(fit_model, newdata = X)
+```
+
+*How can it predict a value not in the data?*
+
+
+
